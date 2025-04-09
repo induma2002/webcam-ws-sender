@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Webcam to WebSocket</title>
+</head>
+<body>
+    <video id="video" width="400" height="300" autoplay playsinline></video>
+    
+    <script>
+        const video = document.getElementById('video');
+        let ws = null;
+        let captureInterval;
+
+        // Access webcam
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => {
+                video.srcObject = stream;
+                video.play();
+                
+                // Start capturing when video plays
+                video.onplaying = () => {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    // Create resizing canvas
+                    const resizeCanvas = document.createElement('canvas');
+                    const resizeCtx = resizeCanvas.getContext('2d');
+                    resizeCanvas.width = 200;
+                    resizeCanvas.height = 200;
+
+                    // Establish WebSocket connection
+                    connectWebSocket();
+
+                    // Capture at 1 FPS (1000ms interval)
+                    captureInterval = setInterval(() => {
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            // Draw video frame to canvas
+                            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                            
+                            // Resize to 200x200
+                            resizeCtx.drawImage(
+                                canvas,
+                                0, 0, canvas.width, canvas.height,
+                                0, 0, 200, 200
+                            );
+                            
+                            // Convert to base64
+                            const base64String = resizeCanvas.toDataURL('image/jpeg', 0.8)
+                                .split(',')[1];
+                            
+                            // Chunk size (adjust based on your needs)
+                            const chunkSize = 1024 * 5; // Smaller chunk size
+
+                            // Send in chunks with a delay
+                            let offset = 0;
+                            function sendChunk() {
+                                if (offset < base64String.length) {
+                                    const chunk = base64String.slice(offset, offset + chunkSize);
+                                    ws.send(JSON.stringify({ type: 'image', chunk: chunk, last: offset + chunkSize >= base64String.length }));
+                                    offset += chunkSize;
+                                    
+                                    // Add a delay before sending the next chunk
+                                    setTimeout(sendChunk, 10); // Adjust delay as needed
+                                }
+                            }
+                            sendChunk();
+                        }
+                    }, 175); // Change interval to 1000ms (1 second)
+                };
+            })
+            .catch(err => {
+                console.error('Error accessing webcam:', err);
+            });
+
+        // WebSocket connection handling
+        function connectWebSocket() {
+            ws = new WebSocket('ws://localhost:8080/app');
+
+            ws.onopen = () => {
+                console.log('Connected to WebSocket');
+            };
+
+            ws.onmessage = (event) => {
+                console.log('Received message:', event.data);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket Error:', error);
+                reconnectWebSocket();
+            };
+
+            ws.onclose = () => {
+                console.log('Disconnected from WebSocket');
+                reconnectWebSocket();
+            };
+        }
+
+        function reconnectWebSocket() {
+            if (ws) {
+                ws = null;
+            }
+            setTimeout(() => {
+                connectWebSocket();
+            }, 1000); // Reconnect after 1 second
+        }
+    </script>
+</body>
+</html>
+
