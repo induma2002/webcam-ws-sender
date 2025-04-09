@@ -1,109 +1,122 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Webcam to WebSocket</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Webcam to WebSocket (Mobile Compatible)</title>
 </head>
 <body>
-    <video id="video" width="400" height="300" autoplay playsinline></video>
-    
-    <script>
-        const video = document.getElementById('video');
-        let ws = null;
-        let captureInterval;
+  <h1>INDUMA WIJESINHA</h1>
+  <video id="video" autoplay playsinline width="400" height="300"></video>
+  <br />
+  <button id="switchCamera">Switch Camera</button>
 
-        // Access webcam
-        navigator.mediaDevices.getUserMedia({ video: true })
-            .then(stream => {
-                video.srcObject = stream;
-                video.play();
-                
-                // Start capturing when video plays
-                video.onplaying = () => {
-                    const canvas = document.createElement('canvas');
-                    const ctx = canvas.getContext('2d');
-                    
-                    // Create resizing canvas
-                    const resizeCanvas = document.createElement('canvas');
-                    const resizeCtx = resizeCanvas.getContext('2d');
-                    resizeCanvas.width = 200;
-                    resizeCanvas.height = 200;
+  <script>
+    const video = document.getElementById('video');
+    const switchBtn = document.getElementById('switchCamera');
+    let ws = null;
+    let captureInterval;
+    let currentStream = null;
+    let useFrontCamera = true;
 
-                    // Establish WebSocket connection
-                    connectWebSocket();
+    async function startCamera() {
+      if (currentStream) {
+        currentStream.getTracks().forEach(track => track.stop());
+      }
 
-                    // Capture at 1 FPS (1000ms interval)
-                    captureInterval = setInterval(() => {
-                        if (ws && ws.readyState === WebSocket.OPEN) {
-                            // Draw video frame to canvas
-                            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                            
-                            // Resize to 200x200
-                            resizeCtx.drawImage(
-                                canvas,
-                                0, 0, canvas.width, canvas.height,
-                                0, 0, 200, 200
-                            );
-                            
-                            // Convert to base64
-                            const base64String = resizeCanvas.toDataURL('image/jpeg', 0.8)
-                                .split(',')[1];
-                            
-                            // Chunk size (adjust based on your needs)
-                            const chunkSize = 1024 * 5; // Smaller chunk size
+      const constraints = {
+        video: {
+          facingMode: useFrontCamera ? "user" : "environment"
+        },
+        audio: false
+      };
 
-                            // Send in chunks with a delay
-                            let offset = 0;
-                            function sendChunk() {
-                                if (offset < base64String.length) {
-                                    const chunk = base64String.slice(offset, offset + chunkSize);
-                                    ws.send(JSON.stringify({ type: 'image', chunk: chunk, last: offset + chunkSize >= base64String.length }));
-                                    offset += chunkSize;
-                                    
-                                    // Add a delay before sending the next chunk
-                                    setTimeout(sendChunk, 10); // Adjust delay as needed
-                                }
-                            }
-                            sendChunk();
-                        }
-                    }, 175); // Change interval to 1000ms (1 second)
-                };
-            })
-            .catch(err => {
-                console.error('Error accessing webcam:', err);
-            });
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        currentStream = stream;
+        video.srcObject = stream;
+        video.play();
 
-        // WebSocket connection handling
-        function connectWebSocket() {
-            ws = new WebSocket('ws://localhost:8080/app');
+        video.onplaying = () => {
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d');
 
-            ws.onopen = () => {
-                console.log('Connected to WebSocket');
-            };
+          const resizeCanvas = document.createElement('canvas');
+          const resizeCtx = resizeCanvas.getContext('2d');
+          resizeCanvas.width = 200;
+          resizeCanvas.height = 200;
 
-            ws.onmessage = (event) => {
-                console.log('Received message:', event.data);
-            };
+          if (!ws || ws.readyState !== WebSocket.OPEN) {
+            connectWebSocket();
+          }
 
-            ws.onerror = (error) => {
-                console.error('WebSocket Error:', error);
-                reconnectWebSocket();
-            };
+          if (captureInterval) clearInterval(captureInterval);
 
-            ws.onclose = () => {
-                console.log('Disconnected from WebSocket');
-                reconnectWebSocket();
-            };
-        }
+          captureInterval = setInterval(() => {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-        function reconnectWebSocket() {
-            if (ws) {
-                ws = null;
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+
+            if (canvas.width === 0 || canvas.height === 0) return;
+
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            resizeCtx.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, 200, 200);
+
+            const base64String = resizeCanvas.toDataURL('image/jpeg', 0.8).split(',')[1];
+            const chunkSize = 1024 * 5;
+            let offset = 0;
+
+            function sendChunk() {
+              if (offset < base64String.length) {
+                const chunk = base64String.slice(offset, offset + chunkSize);
+                ws.send(JSON.stringify({
+                  type: 'image',
+                  chunk: chunk,
+                  last: offset + chunkSize >= base64String.length
+                }));
+                offset += chunkSize;
+                setTimeout(sendChunk, 10);
+              }
             }
-            setTimeout(() => {
-                connectWebSocket();
-            }, 1000); // Reconnect after 1 second
-        }
-    </script>
+
+            sendChunk();
+          }, 500); // adjust interval as needed
+        };
+      } catch (error) {
+        console.error("Camera error:", error);
+        alert("Could not access the camera. Please allow permission.");
+      }
+    }
+
+    function connectWebSocket() {
+      ws = new WebSocket('ws://192.168.0.100:8080/app'); // Replace with your server IP
+
+      ws.onopen = () => console.log("WebSocket connected");
+      ws.onmessage = (e) => console.log("Message:", e.data);
+      ws.onerror = (e) => {
+        console.error("WebSocket error:", e);
+        reconnectWebSocket();
+      };
+      ws.onclose = () => {
+        console.warn("WebSocket closed. Reconnecting...");
+        reconnectWebSocket();
+      };
+    }
+
+    function reconnectWebSocket() {
+      if (ws) ws = null;
+      setTimeout(() => connectWebSocket(), 1000);
+    }
+
+    // Switch camera button
+    switchBtn.addEventListener('click', () => {
+      useFrontCamera = !useFrontCamera;
+      startCamera();
+    });
+
+    // Start initially with front camera
+    startCamera();
+  </script>
 </body>
 </html>
-
